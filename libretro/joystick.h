@@ -18,6 +18,10 @@
 #define	JOY_TRG8	0x20
 #define	JOY_TRG6	0x40
 
+#define PAD_2BUTTON  0
+#define PAD_CPSF_MD  1
+#define PAD_CPSF_SFC 2
+
 void Joystick_Init(void);
 void Joystick_Cleanup(void);
 uint8_t FASTCALL Joystick_Read(uint8_t num);

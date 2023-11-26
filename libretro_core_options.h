@@ -137,6 +137,34 @@ struct retro_core_option_definition option_defs_us[] = {
       "Default (2 Buttons)"
    },
    {
+      "px68k_turbo_delay",
+      "Turbo Delay",
+      "Repeat rate of turbo buttons in frames.",
+      {
+         { "1",  NULL },
+         { "2",  NULL },
+         { "3",  NULL },
+         { "5",  NULL },
+         { "10", NULL },
+         { "15", NULL },
+         { "30", NULL },
+         { "60", NULL },
+         { NULL, NULL },
+      },
+      "3"
+   },
+   {
+      "px68k_turbo_method",
+      "Turbo Method",
+      "Select how turbo is enabled, either hold the turbo button (RetroPad-R2 by default) or tap it to make the buttons turbo.",
+      {
+         { "Hold",   NULL },
+         { "Toggle", NULL },
+         { NULL,     NULL },
+      },
+      "Hold"
+   },
+   {
       "px68k_joy1_select",
       "P1 Joystick Select Mapping",
       "Assigns a keyboard key to joypad's SELECT button since some games use these keys as the Start or Insert Coin buttons.",

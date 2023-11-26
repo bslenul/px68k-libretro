@@ -102,6 +102,8 @@ static uint8_t Core_Key_State[512];
 static uint8_t Core_old_Key_State[512];
 
 static bool joypad1, joypad2;
+unsigned turbo_delay;
+bool turbo_toggle;
 
 static bool opt_analog;
 
@@ -144,9 +146,9 @@ enum {
 static int menu_mode = menu_out;
 
 static retro_video_refresh_t video_cb;
-static retro_environment_t environ_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_set_rumble_state_t rumble_cb;
+retro_environment_t environ_cb;
 retro_input_state_t input_state_cb;
 retro_audio_sample_t audio_cb;
 retro_audio_sample_batch_t audio_batch_cb;
@@ -183,50 +185,6 @@ struct disk_control_interface_t
 static struct disk_control_interface_t disk;
 static struct retro_disk_control_callback dskcb;
 static struct retro_disk_control_ext_callback dskcb_ext;
-
-static struct retro_input_descriptor input_descs[64];
-
-static struct retro_input_descriptor input_descs_p1[] = {
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "X" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Y" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "R2" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "L2 - Menu" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "R3" },
-   { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "L3" },
-};
-static struct retro_input_descriptor input_descs_p2[] = {
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "A" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "B" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "X" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Y" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Left" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Up" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Down" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "R2" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "L2" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "R3" },
-   { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "L3" },
-
-};
-
-static struct retro_input_descriptor input_descs_null[] = {
-   { 0, 0, 0, 0, NULL }
-};
 
 static bool is_path_absolute(const char* path)
 {
@@ -1079,35 +1037,67 @@ run_pmain:
 
 static void retro_set_controller_descriptors(void)
 {
+   struct retro_input_descriptor desc[64];
+   unsigned desc_index = 0;
    unsigned i;
-   unsigned size = 16;
 
-   for (i = 0; i < (2 * size); i++)
-      input_descs[i] = input_descs_null[0];
-
-   if (joypad1 && joypad2)
+   for (i = 0; i < 2; i++)
    {
-      for (i = 0; i < (2 * size); i++)
+      if ((i == 0 && joypad1) || (i == 1 && joypad2))
       {
-         if (i < size)
-            input_descs[i] = input_descs_p1[i];
-         else
-            input_descs[i] = input_descs_p2[i - size];
+         desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "Up" };
+         desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,  "Down" };
+         desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "Left" };
+         desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right" };
+         desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,    "Menu" };
+         desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,    "Turbo" };
+
+         switch (Config.JOY_TYPE[i])
+         {
+            case PAD_2BUTTON:
+               if (Config.VbtnSwap)
+               {
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "TRG1" };
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "TRG2" };
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "TRG2" };
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "TRG1" };
+               }
+               else
+               {
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "TRG2" };
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "TRG1" };
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "TRG1" };
+                  desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "TRG2" };
+               }
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Up + Down" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Left + Right" };
+               break;
+            case PAD_CPSF_MD:
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "TRG1 / MD B" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "TRG2 / MD A" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "TRG4 / MD Y" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "TRG3 / MD X" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "TRG5 / MD Z" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "TRG8 / MD C" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "TRG6 / MD Start" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "TRG7 / MD Mode" };
+               break;
+            case PAD_CPSF_SFC:
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "TRG2 / SFC A" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "TRG1 / SFC B" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "TRG3 / SFC X" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "TRG4 / SFC Y" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "TRG8 / SFC L" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "TRG5 / SFC R" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "TRG6 / SFC Start" };
+               desc[desc_index++] = (struct retro_input_descriptor){ i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "TRG7 / SFC Select" };
+               break;
+         }
       }
    }
-   else if (joypad1 || joypad2)
-   {
-      for (i = 0; i < size; i++)
-      {
-         if (joypad1)
-            input_descs[i] = input_descs_p1[i];
-         else
-            input_descs[i] = input_descs_p2[i];
-      }
-   }
-   else
-      input_descs[0] = input_descs_null[0];
-   environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, &input_descs);
+   desc[desc_index++] = (struct retro_input_descriptor){ 0, 0, 0, 0, NULL };
+
+   environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, &desc);
 }
 
 void retro_set_controller_port_device(unsigned port, unsigned device)
@@ -1143,9 +1133,79 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
    retro_set_controller_descriptors();
 }
 
+/* Using the core options display callback as a "hack" to refresh
+ * input descriptors without having to toggle the menu.
+ * If the frontend doesn't support the callback,
+ * the descriptors will be refreshed on the next menu toggle. */
+static bool set_variable_visibility(void)
+{
+   struct retro_core_option_display option_display;
+   struct retro_variable var = {0};
+   char key[32]              = {0};
+   bool refresh_descs        = false;
+   bool updated              = false;
+   unsigned i;
+   
+   strcpy(key, "px68k_joytype");
+   var.key = key;
+   for (i = 0; i < 2; i++)
+   {
+      key[strlen("px68k_joytype")] = '1' + i;
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         int joy_type_prev = Config.JOY_TYPE[i];
+
+         if (!(strcmp(var.value, "Default (2 Buttons)")))
+            Config.JOY_TYPE[i] = 0;
+         else if (!(strcmp(var.value, "CPSF-MD (8 Buttons)")))
+            Config.JOY_TYPE[i] = 1;
+         else if (!(strcmp(var.value, "CPSF-SFC (8 Buttons)")))
+            Config.JOY_TYPE[i] = 2;
+
+         if (Config.JOY_TYPE[i] != joy_type_prev)
+            refresh_descs = true;
+      }
+   }
+
+   /* Show/hide 'VBtn Swap' core option */
+   if (refresh_descs)
+   {
+      option_display.visible = (Config.JOY_TYPE[0] == 0 || Config.JOY_TYPE[1] == 0);
+      option_display.key = "px68k_vbtn_swap";
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+      updated = true;
+   }
+
+   var.key = "px68k_vbtn_swap";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      int swap_prev = Config.VbtnSwap;
+
+      if (!strcmp(var.value, "TRIG1 TRIG2"))
+         Config.VbtnSwap = 0;
+      else if (!strcmp(var.value, "TRIG2 TRIG1"))
+         Config.VbtnSwap = 1;
+
+      /* No need to update descriptors if neither of the 2 devices is a 2 buttons joypad */
+      if (Config.VbtnSwap != swap_prev && (Config.JOY_TYPE[0] == 0 || Config.JOY_TYPE[1] == 0))
+         refresh_descs = true;
+   }
+
+   if (refresh_descs)
+      retro_set_controller_descriptors();
+
+   return updated;
+}
+
 void retro_set_environment(retro_environment_t cb)
 {
    int nocontent = 1;
+
+   struct retro_core_options_update_display_callback update_display_cb;
+   update_display_cb.callback = set_variable_visibility;
 
    static const struct retro_controller_description port[] = {
       { "RetroPad",              RETRO_DEVICE_JOYPAD },
@@ -1162,6 +1222,7 @@ void retro_set_environment(retro_environment_t cb)
    environ_cb = cb;
    cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
    cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &nocontent);
+   cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update_display_cb);
    libretro_set_core_options(environ_cb);
 }
 
@@ -1174,21 +1235,21 @@ static void update_variables(int running)
    if (!running)
       update_variable_midi_interface();
 
-   strcpy(key, "px68k_joytype");
-   var.key = key;
-   for (i = 0; i < 2; i++)
+   var.key = "px68k_turbo_delay";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      turbo_delay = atoi(var.value);
+
+   var.key = "px68k_turbo_method";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
-      key[strlen("px68k_joytype")] = '1' + i;
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-      {
-         if (!(strcmp(var.value, "Default (2 Buttons)")))
-            Config.JOY_TYPE[i] = 0;
-         else if (!(strcmp(var.value, "CPSF-MD (8 Buttons)")))
-            Config.JOY_TYPE[i] = 1;
-         else if (!(strcmp(var.value, "CPSF-SFC (8 Buttons)")))
-            Config.JOY_TYPE[i] = 2;
-      }
+      if (strcmp(var.value, "Hold") == 0)
+         turbo_toggle = false;
+      else if (strcmp(var.value, "Toggle") == 0)
+         turbo_toggle = true;
    }
 
    var.key = "px68k_cpuspeed";
@@ -1386,17 +1447,6 @@ static void update_variables(int running)
       Mouse_StartCapture(value == 1);
    }
 
-   var.key    = "px68k_vbtn_swap";
-   var.value  = NULL;
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      if (!strcmp(var.value, "TRIG1 TRIG2"))
-         Config.VbtnSwap = 0;
-      else if (!strcmp(var.value, "TRIG2 TRIG1"))
-         Config.VbtnSwap = 1;
-   }
-
    var.key    = "px68k_no_wait_mode";
    var.value  = NULL;
 
@@ -1462,6 +1512,8 @@ static void update_variables(int running)
       else if (!strcmp(var.value, "enabled"))
          Config.AudioDesyncHack = 1;
    }
+
+   set_variable_visibility();
 }
 
 /************************************

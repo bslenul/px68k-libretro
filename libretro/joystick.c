@@ -7,8 +7,12 @@
 #include "keyboard.h"
 
 #include "libretro.h"
+extern retro_environment_t environ_cb;
 extern retro_input_state_t input_state_cb;
 extern uint32_t libretro_supports_input_bitmasks;
+
+extern unsigned turbo_delay;
+extern bool turbo_toggle;
 
 uint8_t joy[2];
 uint8_t JoyKeyState;
@@ -74,14 +78,57 @@ static uint16_t get_px68k_input(int port)
 {
    uint32_t i   = 0;
    uint32_t res = 0;
-   for (i = 0; i < (RETRO_DEVICE_ID_JOYPAD_R + 1); i++)
+   for (i = 0; i < (RETRO_DEVICE_ID_JOYPAD_R2 + 1); i++)
       res |= input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, i) ? (1 << i) : 0;
    return res;
 }
 
-#define PAD_2BUTTON  0
-#define PAD_CPSF_MD  1
-#define PAD_CPSF_SFC 2
+typedef struct
+{
+   uint8_t retropad;
+   uint8_t joypad;
+   uint8_t swap;
+} RetroToJoypad;
+
+static const RetroToJoypad retro_to_joy_2btn[] = {
+   { RETRO_DEVICE_ID_JOYPAD_A, JOY_TRG2, JOY_TRG1 },
+   { RETRO_DEVICE_ID_JOYPAD_B, JOY_TRG1, JOY_TRG2 },
+   { RETRO_DEVICE_ID_JOYPAD_X, JOY_TRG1, JOY_TRG2 },
+   { RETRO_DEVICE_ID_JOYPAD_Y, JOY_TRG2, JOY_TRG1 },
+};
+
+static const RetroToJoypad retro_to_joy_md[] = {
+   { RETRO_DEVICE_ID_JOYPAD_A,      JOY_TRG1 }, /* MD B - Medium Kick  */
+   { RETRO_DEVICE_ID_JOYPAD_B,      JOY_TRG2 }, /* MD A - Light Kick   */
+   { RETRO_DEVICE_ID_JOYPAD_X,      JOY_TRG4 }, /* MD Y - Medium Punch */
+   { RETRO_DEVICE_ID_JOYPAD_Y,      JOY_TRG3 }, /* MD X - Light Punch  */
+   { RETRO_DEVICE_ID_JOYPAD_L,      JOY_TRG5 }, /* MD Z - High Punch   */
+   { RETRO_DEVICE_ID_JOYPAD_R,      JOY_TRG8 }, /* MD C - High Kick    */
+   { RETRO_DEVICE_ID_JOYPAD_START,  JOY_TRG6 }, /* MD Start            */
+   { RETRO_DEVICE_ID_JOYPAD_SELECT, JOY_TRG7 }, /* MD Mode             */
+};
+
+static const RetroToJoypad retro_to_joy_sfc[] = {
+   { RETRO_DEVICE_ID_JOYPAD_A,      JOY_TRG2 }, /* High Kick    */
+   { RETRO_DEVICE_ID_JOYPAD_B,      JOY_TRG1 }, /* Medium Kick  */
+   { RETRO_DEVICE_ID_JOYPAD_X,      JOY_TRG3 }, /* Medium Punch */
+   { RETRO_DEVICE_ID_JOYPAD_Y,      JOY_TRG4 }, /* Light Kick   */
+   { RETRO_DEVICE_ID_JOYPAD_L,      JOY_TRG8 }, /* Light Punch  */
+   { RETRO_DEVICE_ID_JOYPAD_R,      JOY_TRG5 }, /* High Punch   */
+   { RETRO_DEVICE_ID_JOYPAD_START,  JOY_TRG6 },
+   { RETRO_DEVICE_ID_JOYPAD_SELECT, JOY_TRG7 },
+};
+
+static void display_msg(const char *str, unsigned frames)
+{
+   struct retro_message msg; 
+   msg.msg    = str;
+   msg.frames = frames;
+   environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
+}
+
+#define JOY_2BTN 4 /* A and B are duplicated to X and Y, so 4 */
+#define JOY_8BTN 8
 
 void FASTCALL Joystick_Update(int is_menu, int key, int port)
 {
@@ -89,6 +136,11 @@ void FASTCALL Joystick_Update(int is_menu, int key, int port)
    uint8_t temp            = 0;
    static uint8_t pre_ret0 = 0xff;
    uint32_t res            = 0;
+
+   static uint8_t turbo_counter[2][8];
+   static bool turbo_modifier[2];
+   static bool turbo_hold[2];
+   unsigned i;
 
    if (libretro_supports_input_bitmasks)
       res                  = get_px68k_input_bitmasks(port);
@@ -112,18 +164,39 @@ void FASTCALL Joystick_Update(int is_menu, int key, int port)
 
    ret0 ^= temp;
 
+   if (turbo_toggle)
+   {
+      bool turbo_hold_prev = turbo_hold[port];
+      turbo_hold[port] = !!(res & (1 << RETRO_DEVICE_ID_JOYPAD_R2));
+
+      if (turbo_hold[port] && !turbo_hold_prev)
+      {
+         char turbo_msg[64] = {0};
+         turbo_modifier[port] = !turbo_modifier[port];
+
+         snprintf(turbo_msg, sizeof(turbo_msg), "Port %d turbo buttons: %s", port + 1, turbo_modifier[port] ? "ENABLED" : "DISABLED");
+         display_msg(turbo_msg, 180);
+      }
+   }
+   else
+      turbo_modifier[port] = !!(res & (1 << RETRO_DEVICE_ID_JOYPAD_R2));
+
    /* Buttons */
    switch (Config.JOY_TYPE[port])
    {
       case PAD_2BUTTON:
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_A))
-            ret0 ^= (Config.VbtnSwap ? JOY_TRG1 : JOY_TRG2);
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_B))
-            ret0 ^= (Config.VbtnSwap ? JOY_TRG2 : JOY_TRG1);
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_X))
-            ret0 ^= (Config.VbtnSwap ? JOY_TRG2 : JOY_TRG1);
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
-            ret0 ^= (Config.VbtnSwap ? JOY_TRG1 : JOY_TRG2);
+         for (i = 0; i < JOY_2BTN; i++)
+         {
+            if (res & (1 << retro_to_joy_2btn[i].retropad))
+            {
+               if (!turbo_modifier[port] || !turbo_counter[port][i])
+                  ret0 ^= Config.VbtnSwap ? retro_to_joy_2btn[i].swap : retro_to_joy_2btn[i].joypad;
+               turbo_counter[port][i]++;
+               turbo_counter[port][i] %= turbo_delay + 1;
+            }
+            else
+               turbo_counter[port][i] = 0;
+         }
 
          if (res & (1 << RETRO_DEVICE_ID_JOYPAD_START))
             ret0 &= ~(JOY_UP | JOY_DOWN);
@@ -133,43 +206,43 @@ void FASTCALL Joystick_Update(int is_menu, int key, int port)
          break;
 
       case PAD_CPSF_MD:
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_A))
-            ret0 ^= JOY_TRG1;	/* Low-Kick */
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_B))
-            ret0 ^= JOY_TRG2;	/* Mid-Kick */
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_X))
-            ret1 ^= JOY_TRG4; 	/* Low-Punch */
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
-            ret1 ^= JOY_TRG3;	/* Mid-Punch */
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_L))
-            ret1 ^= JOY_TRG5;	/* High-Punch */
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_R))
-            ret1 ^= JOY_TRG8;	/* High-Kick */
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_START))
-            ret1 ^= JOY_TRG6; /* Start */
-         if (!Config.joy1_select_mapping)
-            if (res & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
-               ret1 ^= JOY_TRG7;	/* Mode */
+         for (i = 0; i < JOY_8BTN; i++)
+         {
+            if (res & (1 << retro_to_joy_md[i].retropad))
+            {
+               if (!turbo_modifier[port] || !turbo_counter[port][i])
+               {
+                  if (i < 2) /* A and B */
+                     ret0 ^= retro_to_joy_md[i].joypad;
+                  else       /* X, Y, L, R, Start and Select */
+                     ret1 ^= retro_to_joy_md[i].joypad;
+               }
+               turbo_counter[port][i]++;
+               turbo_counter[port][i] %= turbo_delay + 1;
+            }
+            else
+               turbo_counter[port][i] = 0;
+         }
          break;
 
       case PAD_CPSF_SFC:
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_A))
-            ret0 ^= JOY_TRG2;
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_B))
-            ret0 ^= JOY_TRG1;
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_X))
-            ret1 ^= JOY_TRG3;
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
-            ret1 ^= JOY_TRG4;
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_L))
-            ret1 ^= JOY_TRG8;
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_R))
-            ret1 ^= JOY_TRG5;
-         if (res & (1 << RETRO_DEVICE_ID_JOYPAD_START))
-            ret1 ^= JOY_TRG6;
-         if (!Config.joy1_select_mapping)
-            if (res & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
-               ret1 ^= JOY_TRG7;
+         for (i = 0; i < JOY_8BTN; i++)
+         {
+            if (res & (1 << retro_to_joy_sfc[i].retropad))
+            {
+               if (!turbo_modifier[port] || !turbo_counter[port][i])
+               {
+                  if (i < 2) /* A and B */
+                     ret0 ^= retro_to_joy_sfc[i].joypad;
+                  else       /* X, Y, L, R, Start and Select */
+                     ret1 ^= retro_to_joy_sfc[i].joypad;
+               }
+               turbo_counter[port][i]++;
+               turbo_counter[port][i] %= turbo_delay + 1;
+            }
+            else
+               turbo_counter[port][i] = 0;
+         }
          break;
    }
 
@@ -180,7 +253,6 @@ void FASTCALL Joystick_Update(int is_menu, int key, int port)
     * by pressing and holding key or button aka turbo mode */
    if (is_menu)
    {
-      int i;
       static int repeat_rate, repeat_delay;
       static uint8_t last_inbuf;
       uint8_t joy_in = (ret0 ^ 0xff);
